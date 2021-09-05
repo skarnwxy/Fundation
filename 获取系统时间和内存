@@ -1,0 +1,98 @@
+VS2015中控制台程序获取系统时间
+//////////////////////////////////////////////////////////////////////////////
+方法1：
+在VS2015的控制台程序中，可以通过C++标准库函数、Windows API函数和C++11的函数实现。
+1 C++标准库函数
+通过C++标准库函数time()和localtime_s()获取系统当前时间。
+1.1 time()函数
+1.1.1 功能
+该函数的作用是获取系统当前时间距离1970年1月1日零时的时间，以秒作为单位。
+1.1.2 格式
+该函数的格式为
+time_t time(time_t* time);
+其中，参数time是一个指针，获取到的时间就保存到该指针指向的内容中。如果该参数是NULL，则不保存获取到的时间。该函数的返回值即为获取到的时间。time_t是一个long integer类型。
+
+1.2 localtime_s()函数
+1.2.1 功能
+该函数的功能是将time()函数获取到的秒数转换为当前的年月日时分秒。
+1.2.2 格式
+该函数的格式为
+errno_t localtime_s(struct tm* _tm, const time_t *time);
+其中，参数_tm是tm结构的指针，转换后的时间就保存在该指针指向的内容中。
+
+tm的结构定义如下
+struct tm {
+    int tm_sec;   // seconds after the minute - [0, 60] including leap second
+    int tm_min;   // minutes after the hour - [0, 59]
+    int tm_hour;  // hours since midnight - [0, 23]
+    int tm_mday;  // day of the month - [1, 31]
+    int tm_mon;   // months since January - [0, 11]
+    int tm_year;  // years since 1900
+    int tm_wday;  // days since Sunday - [0, 6]
+    int tm_yday;  // days since January 1 - [0, 365]
+    int tm_isdst; // daylight savings time flag
+};
+该结构中包含了时间信息。参数time是“1.1 time()函数”中获取的时间秒数。如果转换成功，则localtime_s()函数的返回值是0，否则返回错误代码。
+
+1.3 相关代码
+获取当前系统时间的代码如下所示
+time_t tt = time(NULL);
+tm t;
+localtime_s(&t, &tt);
+printf("%d-%02d-%02d %02d:%02d:%02d",
+t.tm_year + 1900, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec);
+
+需要注意的是，使用time()函数与localtime_s()函数，需要添加time.h头文件。
+
+//////////////////////////////////////////////////////////////////////////////
+2 Windows API函数
+通过Windows API的GetLocalTime()函数获取当前系统时间。
+2.1 函数格式
+void WINAPI GetLocalTime(
+  __out  LPSYSTEMTIME LpSystemTime
+）；
+其中，参数LpSystemTime是SYSTEMTIME结构的指针，用于保存获取到的时间
+typedef struct _SYSTEMTIME {
+  WORD wYear;
+  WORD wMonth;
+  WORD wDayOfWeek;
+  WORD wDay;
+  WORD wHour;
+  WORD wMinute;
+  WORD wSecond;
+  WORD wMilliseconds;
+} SYSTEMTIME, *PSYSTEMTIME;
+从以上定义可以看出，SYSTEMTIME不仅包含年月日时分秒，还包含更小的毫秒单位。
+
+2.2 相关代码
+通过GetLocalTime()函数获取当前系统时间的代码如下所示：
+SYSTEMTIME st;
+GetLocalTime(&st);
+printf("%d-%02d-%02d %02d:%02d:%02d:%03d",
+st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+
+2.3 GetLocalTime()与GetSystemTime()的区别
+GetSystemTime()的使用方法与GetLocalTime()函数相同。区别在于，GetLocalTime()获取到的时间是本机时间，而GetSystemTime()获取到的时间是格林尼治时间。如图3所示。
+需要注意的是，在使用Windows API函数时，需要包含Windows.h头文件。
+
+////////////////////////////////////////////////////////////////////////////
+3 C++11新功能
+在C++11中，使用std::chrono库中的system_clock类来获取当前系统时间。
+
+3.1 获取当前系统时间
+system_clock类表示了系统范围内的实时挂钟。相关代码如下所示：
+auto start = chrono::system_clock::now();
+time_t start_time = chrono::system_clock::to_time_t(start);
+printf("%s\n", ctime(&start_time));
+其中，now()函数得到类型为
+chrono::time_point<std::chrono::system_clock>的返回值start；to_time_t()函数是system_clock类的静态函数，将now()函数的返回值转换为time_t类型的对象start_time；最后，通过转换后的start_time构造一个ctime类的对象，并打印出来，如图4所示。
+
+3.2 获取时间间隔
+还通过system_clock类的now()函数获取时间间隔。代码如下所示
+auto start = std::chrono::system_clock::now();
+printf("打印信息所需的时间是:\n");
+auto end = std::chrono::system_clock::now();
+chrono::duration<double> elapsed_seconds = end - start;
+printf("%lf秒.\n", elapsed_seconds.count());
+通过now()函数获取打印信息前后的系统时间start和end，计算出打印信息所需的时间。
+
