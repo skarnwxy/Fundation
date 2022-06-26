@@ -1,4 +1,14 @@
-﻿
+﻿/**
+  * Opencascade Skarn Copyright (C) 2022
+  * @file     STLIterator.cpp
+  * @brief    STL迭代器
+  * @author   debugSarn
+  * @date     2022-03-30
+  * @note
+  * @see
+ */
+
+
 #include <iostream>
 #include <vector>
 

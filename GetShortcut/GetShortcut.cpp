@@ -1,6 +1,6 @@
 ﻿/** 
   * Opencascade Skarn Copyright (C) 2022
-  * @file     GetShortcut.h                                                       
+  * @file     GetShortcut.cpp                                                     
   * @brief    Windows平台全局捕获键盘消息                                                    
   * @author   debugSarn                                                     
   * @date     2022-03-30  

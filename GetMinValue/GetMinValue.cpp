@@ -1,4 +1,12 @@
-﻿// 2020.10.21 Add 获取最小值方法
+﻿/**
+  * Opencascade Skarn Copyright (C) 2022
+  * @file     GetMinValue.cpp
+  * @brief    获取最小值方法
+  * @author   debugSarn
+  * @date     2020.10.21
+  * @note
+  * @see
+ */
 
 #include <iostream>
 #include <vector>

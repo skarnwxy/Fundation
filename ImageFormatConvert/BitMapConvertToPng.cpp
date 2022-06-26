@@ -1,4 +1,12 @@
-﻿// 2020.12.20 Add 图片格式转换 — BitMap ——> png
+﻿/**
+  * Opencascade Skarn Copyright (C) 2022
+  * @file     BitMapConvertToPng.cpp
+  * @brief    图片格式转换
+  * @author   debugSarn
+  * @date     2020.12.20
+  * @note     图片格式转换 — BitMap ——> png
+  * @see
+ */
 
 #include <iostream>
 
