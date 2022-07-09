@@ -18,7 +18,6 @@
   * @see          
   * @note          
  */
-
 void swap(int iFirst, int iSecond) {
 	auto tmp = iFirst;
 	iFirst = iSecond;
@@ -33,7 +32,6 @@ void swap(int iFirst, int iSecond) {
   * @see          
   * @note          
  */
-
 int getTopThird(int iArray[], int length) {
 	
 	// 获取数组的前3个值，并按照从小到大的顺序排列
