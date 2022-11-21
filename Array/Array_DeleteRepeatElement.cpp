@@ -8,7 +8,7 @@
   * @see
  */
 
-#define Array_DeleteRepeatElement
+//#define Array_DeleteRepeatElement
 #ifdef Array_DeleteRepeatElement
 
 #include <iostream>
