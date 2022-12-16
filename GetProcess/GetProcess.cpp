@@ -2,11 +2,13 @@
   * Opencascade Skarn Copyright (C) 2022
   * @file     GetProcess.cpp
   * @brief    读取进程数
-  * @author   debugSarn
+  * @author   debugSkarn
   * @date     2020.6.15
   * @note
   * @see
  */
+
+//#define GetProcess
 
 /////////////////////////////////////////////////////////////////////
 #include <iostream>
@@ -16,18 +18,113 @@
 
 #include <stdio.h>
 #include <stdlib.h> 
-
+#include <winnt.h>
 
 #include "tlhelp32.h"
+#include "Psapi.h"
 
 #include<ctime>
 #pragma comment(lib,"psapi.lib")
+
+#include <thread>
+#include "ThreadCreateClass.h"
+#include "ProcessCreateClass.h"
+#include "TreadMutexClass.h"
+
+#ifndef __linux__
+#include "windows.h"
+#include <stdio.h> 
+
+// 命令调取 CpuID
+#define CpuNum "wmic cpu get DeviceID"
+// 命令调取 Cpu 物理核数
+#define CpuCoreNum "wmic cpu get NumberOfCores"
+// 命令调取 Cpu 逻辑核数
+#define CpuLogicalCoreNum "wmic cpu get NumberOfLogicalProcessors"
+
+#else
+#include "unistd.h"
+#include "sys/sysinfo.h"
+#endif
+
 using namespace std;
 
-/////////////////////////////////////////////////////////////////////
-// (1):进程相关操作
-// 1-1:获取当前进程的内存
-void GetMemoryInfo(void)
+//////////////////////////////////进程相关操作///////////////////////////////////
+/**
+  * @brief        通过进程ID获取进程句柄
+ */
+HANDLE GetProcessHandle(DWORD processID)
+{
+	HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, processID);
+	return hProcess;
+}
+
+/**
+  * @brief        根据进程名称获取进程ID
+ */
+DWORD GetProcessIdFromName(const char *name)
+{
+	HANDLE hsnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (hsnapshot == INVALID_HANDLE_VALUE)
+	{
+		printf("CreateToolhelp32Snapshot Error!\n");
+		return 0;
+	}
+
+	PROCESSENTRY32 pe;
+	pe.dwSize = sizeof(PROCESSENTRY32);
+
+	int flag = Process32First(hsnapshot, &pe);
+	while (flag != 0)
+	{
+		char* currentName = (char*)pe.szExeFile;
+		if (strcmp(currentName, name) == 0)
+		{
+			return pe.th32ProcessID;
+		}
+		flag = Process32Next(hsnapshot, &pe);
+	}
+	CloseHandle(hsnapshot);
+
+	return 0;
+}
+
+/**
+  * @brief        根据进程的ID获取进程的名称
+ */
+char* GetProcessNameFormId(DWORD processID) {
+
+	// 根据进程的ID获取名称（TCHAR <——> wchar_t）
+	TCHAR szProcessName[MAX_PATH] = TEXT("<unknown>");
+	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processID);
+	if (NULL != hProcess)
+	{
+		HMODULE hMod;
+		DWORD cbNeeded;
+		if (EnumProcessModules(hProcess, &hMod, sizeof(hMod), &cbNeeded))
+		{
+			GetModuleBaseName(hProcess, hMod, szProcessName, sizeof(szProcessName) / sizeof(TCHAR));
+		}
+	}
+	CloseHandle(hProcess);
+
+	// 将WCHAR转换为char
+	//char* processname = (char*)szProcessName;
+	WCHAR *wch = szProcessName;
+	int size = WideCharToMultiByte(CP_ACP, 0, wch, -1, NULL, 0, NULL, NULL);
+	char *processname = new char[size + 1];
+	if (!WideCharToMultiByte(CP_ACP, 0, wch, -1, processname, size, NULL, NULL)) {
+		return processname;
+	}
+
+	return processname;
+}
+
+//////////////////////////////////进程内存相关操作///////////////////////////////////
+/** 
+  * @brief        获取当前进程的内存
+ */
+void GetCurrentProcessMemoryInfo(void)
 {
 	HANDLE handle = GetCurrentProcess();
 	PROCESS_MEMORY_COUNTERS pmc;
@@ -37,11 +134,12 @@ void GetMemoryInfo(void)
 	cout << "PeakWorkingSetSize: " << pmc.PeakWorkingSetSize / (1024 * 1024) << " MB" << endl;
 	cout << "PagefileUsage: " << pmc.PagefileUsage / (1024 * 1024) << " MB" << endl;
 	cout << "PeakPagefileUsage: " << pmc.PeakPagefileUsage / (1024 * 1024) << " MB" << endl;
-	cout << endl;
 }
 
-// 1-2:获取指定进程的内存
-void GetAssignMemoryInfo(DWORD processID) {
+/** 
+  * @brief        获取指定进程的内存
+ */
+void GetAssignProcessMemoryInfo(DWORD processID) {
 	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processID);
 
 	PROCESS_MEMORY_COUNTERS pmc;
@@ -53,20 +151,14 @@ void GetAssignMemoryInfo(DWORD processID) {
 	cout << "PeakWorkingSetSize: " << pmc.PeakWorkingSetSize / (1024 * 1024) << " MB" << endl;
 	cout << "PagefileUsage: " << pmc.PagefileUsage / (1024 * 1024) << " MB" << endl;
 	cout << "PeakPagefileUsage: " << pmc.PeakPagefileUsage / (1024 * 1024) << " MB" << endl;
-	cout << endl;
 
 	CloseHandle(hProcess);
 }
-// 1-3:通过进程ID获取进程句柄
-HANDLE GetProcessHandle(DWORD processID)
-{
-	HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, processID);
-	return hProcess;
-}
 
-/////////////////////////////////////////////////////////////////////
-// 进程的打开和关闭
-// 2-1: 获取当前exe程序的token
+//////////////////////////////////进程打开和关闭的相关操作///////////////////////////////////
+/** 
+  * @brief        获取当前exe程序的token
+ */
 BOOL GetTokenByName(HANDLE &hToken, LPSTR lpName)
 {
 	if (!lpName)
@@ -115,7 +207,9 @@ BOOL GetTokenByName(HANDLE &hToken, LPSTR lpName)
 	return (bRet);
 }
 
-// 2-2: 打开程序
+/**
+  * @brief        打开程序
+ */
 BOOL StartProcess(LPCSTR lpProcName)
 {
 	string CurSubProcessDir(lpProcName);
@@ -128,7 +222,7 @@ BOOL StartProcess(LPCSTR lpProcName)
 	}
 
 	HANDLE hToken = NULL;
-	LPCSTR procName = "EXPLORER.EXE";
+	LPCSTR procName = "notepad.exe";
 	LPSTR proName = (LPSTR)procName;
 	if (!GetTokenByName(hToken, proName))
 	{
@@ -168,8 +262,12 @@ BOOL StartProcess(LPCSTR lpProcName)
 	return bResult;
 }
 
+/** 
+  * @brief        启动程序(新建进程)
+ */
 void StartProcessWay() {
 	TCHAR commandLine[] = TEXT("H://software//install//WeChat//WeChat.exe");
+	//TCHAR commandLine[] = TEXT("notepad.exe");
 	STARTUPINFO si = { sizeof(si) };
 	PROCESS_INFORMATION pi;
 	bool bRet = CreateProcess(
@@ -189,6 +287,7 @@ void StartProcessWay() {
 		CloseHandle(pi.hThread);
 		CloseHandle(pi.hProcess);
 
+		cout << "新建的进程是: WeChat.exe" << endl;
 		printf("进程ID：%d\n", pi.dwProcessId);
 		printf("线程ID：%d\n", pi.dwThreadId);
 		cout << "Open target process success" << endl;
@@ -198,7 +297,9 @@ void StartProcessWay() {
 	}
 }
 
-// 2-3:关闭程序
+/**
+  * @brief        关闭程序
+ */
 int KillProgram(LPCSTR lpProcName)
 {
 	const char    *strFile = NULL;
@@ -253,38 +354,10 @@ int KillProgram(LPCSTR lpProcName)
 	return 0;   //操作正常
 }
 
-
-/////////////////////////////////////////////////////////////////////
-// ②：获取系统进程的名称和ID
-void PrintProcessNameAndID(DWORD processID)
-{
-	TCHAR szProcessName[MAX_PATH] = TEXT("<unknown>");
-	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processID);
-
-	if (NULL != hProcess)
-	{
-		HMODULE hMod;
-		DWORD cbNeeded;
-		if (EnumProcessModules(hProcess, &hMod, sizeof(hMod),&cbNeeded))
-		{
-			GetModuleBaseName(hProcess, hMod, szProcessName, sizeof(szProcessName) / sizeof(TCHAR));
-		}
-	}
-
-	if (wcscmp(szProcessName, TEXT("GetProcess.exe")) == 0) {
-		cout << "ProcessName And ID: " << endl;
-		_tprintf(TEXT("%s  (PID: %u)\n"), szProcessName, processID);
-		cout << endl;
-
-		cout << "Process Memory: " << endl;
-		GetAssignMemoryInfo(processID);
-		cout << endl;
-	}
-
-	CloseHandle(hProcess);
-}
-
-// ③：对特定进程进行监控
+//////////////////////////////////进程监控的相关操作///////////////////////////////////
+/** 
+  * @brief        对特定进程进行监控
+ */
 void DetectmMemory()
 {
 	for (;;)
@@ -325,7 +398,9 @@ void DetectmMemory()
 
 //detect_mem_thread = thread(&Product_Automata::detect_memory, this);  //创建一个子线程进行内存监控
 
-// 对特定进程进行监控
+/** 
+  * @brief        对特定进程进行监控
+ */
 int WatchMemory(DWORD address, BYTE len, LPCWSTR pszExe)
 {
 	STARTUPINFO si;
@@ -352,12 +427,16 @@ int WatchMemory(DWORD address, BYTE len, LPCWSTR pszExe)
 	DWORD NTContAddr = 0;
 	HMODULE ntdll;
 	DWORD febx = 0;
-	DWORD dwBytesRead;
-	DWORD dwBytesWritten;
+	//DWORD dwBytesRead;
+	//DWORD dwBytesWritten;
 	DWORD dwBuff;
 	DWORD dwBPCnt = 0;
 	DWORD dwSSCnt = 0;
 	DWORD value = 0;
+
+	SIZE_T dwBytesRead;
+	SIZE_T dwBytesWritten;
+
 	ResumeThread(pi.hThread);
 	switch (len)
 	{
@@ -402,7 +481,7 @@ int WatchMemory(DWORD address, BYTE len, LPCWSTR pszExe)
 				{
 					GetThreadContext(pi.hThread, &Regs);
 
-					febx = Regs.Esp;
+					//febx = Regs.Esp;
 					febx += 4; //这里加4的是为了获得CONTEXT的地址，原理可以参考BugSlayer专栏，MSDN上有。
 					ReadProcessMemory(pi.hProcess, (void*)febx, &dwBuff, 4, &dwBytesRead);
 					ReadProcessMemory(pi.hProcess, (void*)dwBuff, (void*)&Regs, sizeof(CONTEXT), &dwBytesRead);
@@ -437,62 +516,186 @@ int WatchMemory(DWORD address, BYTE len, LPCWSTR pszExe)
 	return 0;
 }
 
+/////////////////////////////////////////////////////////////////////
+/** 
+  * @brief        获取CPU的逻辑核数
+  * @param[out]   oNumOfLogicalCores 获取的逻辑核数
+  * @see          
+  * @note          
+ */
+void retriveCPULogicalCores(int &oNumOfLogicalCores) {
+#ifndef __linux__
+	SYSTEM_INFO sysInfo;
+	GetSystemInfo(&sysInfo);
+
+	oNumOfLogicalCores = sysInfo.dwNumberOfProcessors;
+	cout << "CPU逻辑核数是: " << oNumOfLogicalCores << endl;
+#else
+	int numConfCores = sysconf(_SC_NPROCS_CONF);
+	cout << "CPU逻辑核数是(当前系统所有的CPU核数): " << numConfCores << endl;
+
+	int numOnlnCores = sysconf(_SC_NPROCS_ONLN);
+	cout << "CPU逻辑核数是(当前系统用户可以使用的CPU核数): " << numConfCores << endl;
+
+#endif
+}
+
+/** 
+  * @brief        获取 Cpu 信息
+ */
+void getCpuInformation(const char *command)
+{
+	// 获取windows命令回执
+	//FILE *winCommand = popen(command, "r");
+	//char buf[100] = {};
+
+	//if (!winCommand)
+	//{
+	//	perror("popen");
+	//	exit(EXIT_FAILURE);
+	//}
+	//else
+	//{
+	//	// 输出命令回执
+	//	while (fgets(buf, sizeof(buf) - 1, winCommand) != 0)
+	//	{
+	//		printf("%s", buf);
+	//		memset(buf, 0, sizeof(buf));
+	//	}
+
+	//	pclose(winCommand);
+	//}
+}
+
+/**
+  * @brief        获取CPU的物理核数
+  * @param[out]   oNumOfCores 获取的物理核数
+  * @see
+  * @note
+ */
+void retrieveCPUCores(int &oNumOfCores)
+{
+	oNumOfCores = 0;
+	
+	// 获取逻辑处理器信息
+	PSYSTEM_LOGICAL_PROCESSOR_INFORMATION buffer = NULL;
+	DWORD returnLength = 0;
+	while (true){
+		DWORD ro = GetLogicalProcessorInformation(buffer, &returnLength);
+		if (ro != FALSE){
+			break;
+		}
+		
+		if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+			return;
+		}
+
+		if (buffer) {
+			free(buffer);
+		}
+		buffer = (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION)malloc(returnLength);
+	}
+
+	// 遍历处理器获取其中的物理核数信息
+	PSYSTEM_LOGICAL_PROCESSOR_INFORMATION ptr = buffer;
+	DWORD byteOffest = 0;
+	while (byteOffest + sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION) <= returnLength){
+		if (ptr->Relationship == RelationProcessorCore) {
+			++oNumOfCores;
+		}
+		byteOffest += sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
+		++ptr;
+	}
+	free(buffer);
+}
 
 // 主函数
 int main(int argc, char* argv)
 {
-	time_t begin = clock();
-	
+	////////////////////////////////////获取进程//////////////////////////////////////
+
 	////////////////////////////////////////////////////////////////////
 	// ①：获取当前进程的内存使用情况
 	cout << "-------------------------------" << endl;
+	const char* currentName = "GetProcess.exe";
+	cout << "当前进程名称是：" << currentName << endl;
+	DWORD currentId = GetProcessIdFromName(currentName);
+	cout << "当前进程ID是：" << currentId << endl;
+	
 	cout << "当前进程内存的使用情况：" << endl;
-	GetMemoryInfo();
+	GetCurrentProcessMemoryInfo();
 	/*cout << "回收所有可回收的内存" << endl;
 	EmptyWorkingSet(GetCurrentProcess());
-	GetMemoryInfo();
+	GetCurrentProcessMemoryInfo();
 	cout << "开始动态分配内存" << endl;
 	char* buf[5];
 	for (int i = 0; i < sizeof(buf) / sizeof(char*); i++)
 	{
 		buf[i] = new char[102400];
-		GetMemoryInfo();
+		GetCurrentProcessMemoryInfo();
 	}
 	cout << "开始释放内存" << endl;
 	for (int i = 0; i < sizeof(buf) / sizeof(char*); i++)
 	{
 		delete buf[i];
 		buf[i] = NULL;
-		GetMemoryInfo();
+		GetCurrentProcessMemoryInfo();
 	}
 	cout << "回收所有可回收的内存" << endl;
 	EmptyWorkingSet(GetCurrentProcess());
-	GetMemoryInfo();
+	GetCurrentProcessMemoryInfo();
 	cout << endl;*/
+	cout << endl;
 
 	////////////////////////////////////////////////////////////////////
 	// ②：获取特定进程的内存使用情况
 	cout << "-------------------------------" << endl;
-	cout << "指定的GetProcess进程内存的使用情况：" << endl;
-
+	// 获取所有的进程
 	DWORD aProcesses[1024], cbNeeded, cProcesses;
-	unsigned int i;
 	if (!EnumProcesses(aProcesses, sizeof(aProcesses), &cbNeeded))
-	{
+{
 		return 1;
 	}
 	cProcesses = cbNeeded / sizeof(DWORD);
 
-	for (i = 0; i < cProcesses; i++)
+	// 遍历所有进程找到指定的进程
+	bool isExis = false;
+	for (int i = 0; i < cProcesses; i++)
 	{
-		if (aProcesses[i] != 0)
+		if (aProcesses[i] == 0)
 		{
-			PrintProcessNameAndID(aProcesses[i]);
+			continue;
+		}
+
+		//PrintProcessNameAndID(aProcesses[i]);
+		DWORD processID = aProcesses[i];
+
+		char* processName = GetProcessNameFormId(processID);
+		if (strcmp(processName, "WeChat.exe") == 0) {
+			//cout << "ProcessName And ID: " << endl;
+			//_tprintf(TEXT("%s  (PID: %u)\n"), processname, processID);
+			//cout << endl;
+			cout << "指定进程名称是：" << processName << endl;
+			cout << "指定进程ID是：" << processID << endl;
+
+			cout << "指定的WeChat进程内存的使用情况：" << endl;
+			GetAssignProcessMemoryInfo(processID);
+			
+			delete[] processName; processName = nullptr;
+
+			isExis = true;
+			break;
 		}
 	}
+	if (!isExis) {
+		cout << "指定的进程不存在或者指定的进程的已终止！" << endl;
+	}
+	cout << endl;
 
 	////////////////////////////////////////////////////////////////////
 	// ③：获取特定进程的内存使用情况
+	//cout << "-------------------------------" << endl;
+	//cout << "获取特定进程的内存使用情况: " << endl;
 	// 先获取所有的进程，然后通过进程的名称监控内存的变化
 	//DetectmMemory();
 	//LPCWSTR pszExe = TEXT("HlpViewer.exe");
@@ -500,14 +703,77 @@ int main(int argc, char* argv)
 
 	////////////////////////////////////////////////////////////////////
 	// ④：打开和关闭外部程序
-	//StartProcess("EXPLORER.EXE");
-	//KillProgram("WeChat.exe");
-	StartProcessWay();
-
+	cout << "-------------------------------" << endl;
+	cout << "打开和关闭外部程序: " << endl;
+	
+	time_t begin = clock();
+	//StartProcess("notepad.exe");   // 打开进程
+	//KillProgram("WeChat.exe");     // 关闭进程
+	StartProcessWay();               // 新建进程
 	time_t end = clock();
+
 	double ret = double(end - begin) / CLOCKS_PER_SEC;
-	cout << "This Process Runtime is:" << ret/60. << " min" << endl;
+	cout << "This Process Runtime is:" << ret << " s" << endl;
 	cout << endl;
+
+	////////////////////////////////////获取CPU的核数//////////////////////////////////////
+	cout << "-------------------------------" << endl;
+	cout << "获取CPU核数: " << endl;
+	// (1): CPU逻辑核数(线程数)
+	// Note: CPU的核数分为逻辑核数和物理核数，逻辑核数即线程数，指的是CPU同时可以运行的线程的数量. 
+	//       当在并发编程中，创建线程的个数应该小于或者等于逻辑核数.
+	//       为什么不使用物理核数而使用逻辑核数作为标准？——因此物理核数是固定的，而逻辑核数通过msconfig指令可以修改，因此不同的机器即使物理内核相同但是逻辑核数可能不同，因此不能简单的根据物理核数的二倍作为并发编程中创建线程的上线
+	int numOfCores = 0;
+	retriveCPULogicalCores(numOfCores);
+
+	// 具体核数要数ID个数
+	getCpuInformation(CpuNum);
+	// 具体物理核数直接给出
+	getCpuInformation(CpuCoreNum);
+	// 具体逻辑核数直接给出
+	getCpuInformation(CpuLogicalCoreNum);
+
+	// CPU逻辑核数(线程数)
+	numOfCores = std::thread::hardware_concurrency();
+	cout << "CPU逻辑核数是: " << numOfCores << endl;
+
+	// (2): CPU物理核数
+	retrieveCPUCores(numOfCores);
+	cout << "CPU物理核数是: " << numOfCores << endl;
+	cout << endl;
+
+	////////////////////////////////////创建进程//////////////////////////////////////
+	cout << "-------------------------------" << endl;
+	cout << "创建新的进程: " << endl;
+	ProcessCreateClass processObject;
+	processObject.createProcessWithWindAPI();
+
+	cout << endl;
+
+	////////////////////////////////////创建线程//////////////////////////////////////
+	cout << "-------------------------------" << endl;
+	cout << "创建新线程: " << endl;
+	std::cout << "Main thread id " << std::this_thread::get_id() << std::endl;
+	ThreadCreateClass threadObject;
+	threadObject.createThreadWithWindAPI();
+
+	threadObject.createThreadWithoutParam();
+	threadObject.createThreadWithParam();
+	threadObject.createThreadWithFunctor();
+	threadObject.createThreadWithMember();
+	threadObject.createThreadWithConstructor();
+	threadObject.createThreadWithLambda();
+
+	cout << endl;
+
+	//////////////////////////////////////////////////////////////////////////
+	cout << "-------------------------------" << endl;
+	cout << "多进程/线程同步和互斥: " << endl;
+	TreadMutexClass myobja;
+	thread myOutMsgObj(&TreadMutexClass::outMsgRecvQueue, &myobja);//要注意第二个参数是引用才能保证线程中使用的是同一个对象
+	thread myInnMsgObj(&TreadMutexClass::inMsgRecvQueue, &myobja);
+	myOutMsgObj.join();
+	myInnMsgObj.join();
 
 	return 0;
 }
