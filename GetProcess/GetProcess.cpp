@@ -20,6 +20,10 @@
 #include <stdlib.h> 
 #include <winnt.h>
 
+#include <fstream>
+#include <string>
+#include <io.h>
+
 #include "tlhelp32.h"
 #include "Psapi.h"
 
@@ -30,6 +34,8 @@
 #include "ThreadCreateClass.h"
 #include "ProcessCreateClass.h"
 #include "TreadMutexClass.h"
+
+#include <ATLComTime.h>
 
 #ifndef __linux__
 #include "windows.h"
@@ -185,7 +191,7 @@ BOOL GetTokenByName(HANDLE &hToken, LPSTR lpName)
 		do
 		{
 			// 寻找指定进程的Token
-			WCHAR *wch = pe32.szExeFile;
+			WCHAR *wch = (WCHAR*)pe32.szExeFile;
 			int size = WideCharToMultiByte(CP_ACP, 0, wch, -1, NULL, 0, NULL, NULL);
 			char *ch = new char[size + 1];
 			if (!WideCharToMultiByte(CP_ACP, 0, wch, -1, ch, size, NULL, NULL)) {
@@ -331,7 +337,7 @@ int KillProgram(LPCSTR lpProcName)
 		do
 		{
 			// 将WCHAR转换为char
-			WCHAR *wch = stProcEntry32.szExeFile;
+			WCHAR *wch = (WCHAR*)stProcEntry32.szExeFile;
 			int size = WideCharToMultiByte(CP_ACP, 0, wch, -1, NULL, 0, NULL, NULL);     
 			char *ch = new char[size + 1];     
 			if (!WideCharToMultiByte(CP_ACP, 0, wch, -1, ch, size, NULL, NULL)){ 
@@ -609,9 +615,206 @@ void retrieveCPUCores(int &oNumOfCores)
 	free(buffer);
 }
 
+/** 
+  * @brief        多线程文件锁定
+  * @see          
+  * @note          
+ */
+void multiThreadLockFile() {
+	/*
+	C++实现文件锁定的方法：
+		1.	使用std::fstream打开文件，并使用std::ios::app模式打开文件以进行追加写入。
+		2.	使用std::unique_lock创建一个独占锁对象，以确保在写入文件时不会被其他线程或进程干扰。
+		3.	在写入文件之前，使用std::lock_guard获取锁对象，以确保在写入文件时不会被其他线程或进程干扰。
+		4.	写入文件后，使用std::unlock_guard释放锁对象。
+	*/
+
+	std::string filename = "example.txt";
+	std::string account = "123456";
+	std::ofstream ofs(filename, std::ios::app);
+	std::mutex mtx;
+	std::unique_lock<std::mutex> lck(mtx);
+	ofs << "Account: " << account << std::endl;
+	std::lock_guard<std::mutex> guard(mtx);
+	ofs << "Write something to file." << std::endl;
+}
+
+/** 
+  * @brief        通过LockFileEx方法锁定文件
+  * @see          
+  * @note          
+ */
+void deleteFileLockFileExt()
+{
+	// 1. 打开文件 —— 获取文件句柄
+	// 方法1: 通过文件缓冲区获取文件句柄对象
+	/*
+	ofstream file("example.txt");
+	// 获取文件流的缓冲区对象
+	std::streambuf* buf = file.rdbuf();
+	// 调用缓冲区对象的 fd() 成员函数获取文件描述符
+	int fd = buf->fd();
+	// 检索与指定的文件说明符关联的操作系统文件句柄
+	HANDLE handle = (HANDLE)_get_osfhandle(fd);  // 包含io.h头文件
+	*/
+
+	// 方法2: 通过CreateFile方法获取文件句柄对象
+	// const char* ——> wchar_t(LPCWSTR)
+	//const char* str = "G:\\Code\\branch_Fundation\\GetProcess\\example.txt";
+	//int len = lstrlenA(str) + 1;
+	//wchar_t* filePath = new wchar_t[len];
+	//lstrcpyW(filePath, str);
+
+	const char* str = "example.txt";
+	int len = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0);
+	wchar_t* filePath = new wchar_t[len];
+	MultiByteToWideChar(CP_UTF8, 0, str, -1, filePath, len);
+
+	HANDLE handle = CreateFile(
+		filePath,
+		// Just normal reading
+		FILE_GENERIC_READ,
+		// Share all, do not lock the file
+		FILE_SHARE_READ | FILE_SHARE_WRITE,
+		NULL,
+		OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL,
+		NULL
+	);
+	if (handle == INVALID_HANDLE_VALUE) {
+		// 获取错误
+		DWORD erM = 0;
+		LPVOID lpMsgBuf;
+		CString theErr;
+		erM = GetLastError();
+		FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+			NULL,
+			erM,
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+			(LPTSTR)&lpMsgBuf,
+			0, NULL);
+
+		char* pChar = static_cast<char*>(lpMsgBuf); // 将LPVOID转换为char*指针
+		CString str(pChar); // 使用CString的构造函数将char*指针转换为CString对象
+		theErr.Format(_T("%s"), lpMsgBuf);//theErr显示为“拒绝访问”
+
+		std::cout << "Failed to open file." << std::endl;
+		return;
+	}
+
+	// 2. 锁定文件
+	OVERLAPPED overlapped = { 0 };
+	overlapped.Offset = 0;
+	overlapped.OffsetHigh = 0;
+	overlapped.hEvent = NULL;
+	LockFileEx(handle, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &overlapped);
+
+	// 3. 在文件中写入数据
+	//file << "Hello, world!" << endl;
+
+	// 4. 解锁文件
+	UnlockFileEx(handle, 0, MAXDWORD, MAXDWORD, &overlapped);
+
+	// 5. 关闭文件
+	//file.close();
+	CloseHandle(handle);
+	delete[] filePath;
+
+	return ;
+}
+
+/** 
+  * @brief        通过LockFile方法锁定文件
+  * @see          
+  * @note          
+ */
+void deleteFileLockFile() {
+	// 要删除的文件路径
+	const char* str = "G:\\example.txt";
+	int len = MultiByteToWideChar(CP_UTF8, 0, str, -1, NULL, 0);
+	wchar_t* filePath = new wchar_t[len];
+	MultiByteToWideChar(CP_UTF8, 0, str, -1, filePath, len);
+
+	// 获取文件句柄
+	//HANDLE hFile = CreateFile(filePath, GENERIC_ALL, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	HANDLE hFile = CreateFile(
+		filePath,
+		// Just normal reading
+		FILE_GENERIC_READ,
+		// Share all, do not lock the file
+		FILE_SHARE_READ | FILE_SHARE_WRITE,
+		NULL,
+		OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL,
+		NULL
+	);
+
+	if (hFile == INVALID_HANDLE_VALUE) {
+		// 获取错误
+		DWORD erM = 0;
+		LPVOID lpMsgBuf;
+		CString theErr;
+		erM = GetLastError();
+		FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+			NULL,
+			erM,
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+			(LPTSTR)&lpMsgBuf,
+			0, NULL);
+		theErr.Format(_T("%s"), lpMsgBuf);//theErr显示为“拒绝访问”
+
+		std::cout << "Failed to open file." << std::endl;
+		return ;
+	}
+
+	// 锁定文件
+	bool result = LockFile(hFile, 0, 0, MAXDWORD, MAXDWORD);
+	if (result)
+	{
+		std::cout << "File locked." << std::endl;
+
+		// 删除文件 —— 执行相关操作
+		if (DeleteFile(filePath)) {
+			std::cout << "File deleted." << std::endl;
+		}
+		else {
+			std::cout << "Failed to delete file." << std::endl;
+		}
+
+		// 解锁文件
+		UnlockFile(hFile, 0, 0, MAXDWORD, MAXDWORD);
+		std::cout << "File unlocked." << std::endl;
+	}
+	else {
+		std::cout << "Failed to lock file." << std::endl;
+	}
+
+	// 删除文件 —— 执行相关操作
+	if (DeleteFile(filePath)) {
+		std::cout << "File deleted." << std::endl;
+	}
+	else {
+		std::cout << "Failed to delete file." << std::endl;
+	}
+
+	// 关闭文件句柄
+	CloseHandle(hFile);
+
+	// 删除文件 —— 执行相关操作
+	if (DeleteFile(filePath)) {
+		std::cout << "File deleted." << std::endl;
+	}
+	else {
+		std::cout << "Failed to delete file." << std::endl;
+	}
+}
+
 // 主函数
 int main(int argc, char* argv)
 {
+	SYSTEMTIME sysStartTime = { 0 };
+	GetLocalTime(&sysStartTime);
+
 	////////////////////////////////////获取进程//////////////////////////////////////
 
 	////////////////////////////////////////////////////////////////////
@@ -774,6 +977,39 @@ int main(int argc, char* argv)
 	thread myInnMsgObj(&TreadMutexClass::inMsgRecvQueue, &myobja);
 	myOutMsgObj.join();
 	myInnMsgObj.join();
+
+	/////////////////////////////////////////////////////////////////////////
+	cout << "-------------------------------" << endl;
+	cout << "获取时间间隔：" << endl;
+
+	for (int i = 0; i <= 1000000; ++i) {
+		int a = 0;
+	}
+
+	//Sleep(100);
+	SYSTEMTIME sysEndTime = {0};
+	GetLocalTime(&sysEndTime);
+	
+	char strStartTime[64] = {0};
+	sprintf_s(strStartTime, "%d-%02d-%02d %02d:%02d:%02d", sysStartTime.wYear, sysStartTime.wMonth, sysStartTime.wDay, sysStartTime.wHour, sysStartTime.wMinute, sysStartTime.wSecond);
+	cout << "开始时间：" << strStartTime << endl;
+
+	char strEndTime[64] = { 0 };
+	sprintf_s(strEndTime, "%d-%02d-%02d %02d:%02d:%02d", sysEndTime.wYear, sysEndTime.wMonth, sysEndTime.wDay, sysEndTime.wHour, sysEndTime.wMinute, sysEndTime.wSecond);
+	cout << "结束时间：" << strEndTime << endl;
+
+	COleDateTime cStartTime(sysStartTime);
+	COleDateTime cEndTime(sysEndTime);
+	COleDateTimeSpan cCastTimeSpan = cEndTime - cStartTime;
+	int nCastTime = cCastTimeSpan.GetTotalSeconds();
+	cout << "时间间隔是：" << nCastTime << "s" << endl;
+
+	////////////////////////////////////锁定文件//////////////////////////////////////
+	//multiThreadLockFile();
+	
+	deleteFileLockFileExt();
+
+	deleteFileLockFile();
 
 	return 0;
 }
